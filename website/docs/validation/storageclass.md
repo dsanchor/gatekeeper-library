@@ -6,7 +6,7 @@ title: Storage Class
 # Storage Class
 
 ## Description
-Requires storage classes to be specified when used. Only Gatekeeper 3.9+ is supported.
+Requires storage classes to be specified when used. Only Gatekeeper 3.9+ and non-ephemeral containers are supported.
 
 ## Template
 ```yaml
@@ -16,8 +16,8 @@ metadata:
   name: k8sstorageclass
   annotations:
     metadata.gatekeeper.sh/title: "Storage Class"
-    metadata.gatekeeper.sh/version: 1.0.1
-    metadata.gatekeeper.sh/requiresSyncData: |
+    metadata.gatekeeper.sh/version: 1.1.2
+    metadata.gatekeeper.sh/requires-sync-data: |
       "[
         [
           {
@@ -28,7 +28,7 @@ metadata:
         ]
       ]"
     description: >-
-      Requires storage classes to be specified when used. Only Gatekeeper 3.9+ is supported.
+      Requires storage classes to be specified when used. Only Gatekeeper 3.9+ and non-ephemeral containers are supported.
 spec:
   crd:
     spec:
@@ -43,6 +43,11 @@ spec:
             includeStorageClassesInMessage:
               type: boolean
               default: true
+            allowedStorageClasses:
+              type: array
+              description: "An optional allow-list of storage classes.  If specified, any storage class not in the `allowedStorageClasses` parameter is disallowed."
+              items:
+                type: string
   targets:
     - target: admission.k8s.gatekeeper.sh
       rego: |
@@ -63,19 +68,35 @@ spec:
           msg := sprintf("StorageClasses not synced. Gatekeeper may be misconfigured. Please have a cluster-admin consult the documentation.", [])
         }
 
-        storageclass_found(name) {
+        storageclass_allowed(name) {
           data.inventory.cluster["storage.k8s.io/v1"]["StorageClass"][name]
+          # support both direct use of * and as the default value
+          object.get(input.parameters, "allowedStorageClasses", ["*"])[_] == "*"
+        }
+
+        storageclass_allowed(name) {
+          data.inventory.cluster["storage.k8s.io/v1"]["StorageClass"][name]
+          input.parameters.allowedStorageClasses[_] == name
         }
 
         violation[{"msg": pvc_storageclass_badname_msg}] {
           is_pvc(input.review.object)
-          not storageclass_found(input.review.object.spec.storageClassName)
+          not storageclass_allowed(input.review.object.spec.storageClassName)
         }
         pvc_storageclass_badname_msg := sprintf("pvc did not specify a valid storage class name <%v>. Must be one of [%v]", args) {
           input.parameters.includeStorageClassesInMessage
+          object.get(input.parameters, "allowedStorageClasses", null) == null
           args := [
             input.review.object.spec.storageClassName,
             concat(", ", [n | data.inventory.cluster["storage.k8s.io/v1"]["StorageClass"][n]])
+          ]
+        } else := sprintf("pvc did not specify an allowed and valid storage class name <%v>. Must be one of [%v]", args) {
+          input.parameters.includeStorageClassesInMessage
+          object.get(input.parameters, "allowedStorageClasses", null) != null
+          sc := {n | data.inventory.cluster["storage.k8s.io/v1"]["StorageClass"][n]} & {x | x = object.get(input.parameters, "allowedStorageClasses", [])[_]}
+          args := [
+            input.review.object.spec.storageClassName,
+            concat(", ", sc)
           ]
         } else := sprintf(
           "pvc did not specify a valid storage class name <%v>.",
@@ -99,14 +120,25 @@ spec:
         violation[{"msg": statefulset_vct_badname_msg(vct)}] {
           is_statefulset(input.review.object)
           vct := input.review.object.spec.volumeClaimTemplates[_]
-          not storageclass_found(vct.spec.storageClassName)
+          not storageclass_allowed(vct.spec.storageClassName)
         }
         statefulset_vct_badname_msg(vct) := msg {
           input.parameters.includeStorageClassesInMessage
+          object.get(input.parameters, "allowedStorageClasses", null) == null
           msg := sprintf(
               "statefulset did not specify a valid storage class name <%v>. Must be one of [%v]", [
               vct.spec.storageClassName,
               concat(", ", [n | data.inventory.cluster["storage.k8s.io/v1"]["StorageClass"][n]])
+          ])
+        }
+        statefulset_vct_badname_msg(vct) := msg {
+          input.parameters.includeStorageClassesInMessage
+          object.get(input.parameters, "allowedStorageClasses", null) != null
+          sc := {n | data.inventory.cluster["storage.k8s.io/v1"]["StorageClass"][n]} & {x | x = object.get(input.parameters, "allowedStorageClasses", [])[_]}
+          msg := sprintf(
+              "statefulset did not specify an allowed and valid storage class name <%v>. Must be one of [%v]", [
+              vct.spec.storageClassName,
+              concat(", ", sc)
           ])
         }
         statefulset_vct_badname_msg(vct) := msg {
@@ -132,8 +164,6 @@ spec:
           []
         )
 
-        #FIXME pod generic ephemeral might be good to validate some day too.
-
 ```
 
 ### Usage
@@ -142,7 +172,7 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 ```
 ## Examples
 <details>
-<summary>storageclass</summary><blockquote>
+<summary>storageclass</summary>
 
 <details>
 <summary>constraint</summary>
@@ -383,4 +413,91 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 </details>
 
 
-</blockquote></details>
+</details><details>
+<summary>storageclass-allowlist</summary>
+
+<details>
+<summary>constraint</summary>
+
+```yaml
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sStorageClass
+metadata:
+  name: allowed-storageclass
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["PersistentVolumeClaim"]
+      - apiGroups: ["apps"]
+        kinds: ["StatefulSet"]
+  parameters:
+    includeStorageClassesInMessage: true
+    allowedStorageClasses:
+      - allowed-storage-class
+
+```
+
+Usage
+
+```shell
+kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-library/master/library/general/storageclass/samples/storageclass-allowlist/constraint.yaml
+```
+
+</details>
+
+<details>
+<summary>allowed-storage-class-pvc</summary>
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: allowed-storage-class-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 8Gi
+  storageClassName: allowed-storage-class
+
+```
+
+Usage
+
+```shell
+kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-library/master/library/general/storageclass/samples/storageclass-allowlist/example_allowed.yaml
+```
+
+</details>
+<details>
+<summary>disallowed-storage-class-pvc</summary>
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: disallowed-storage-class-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 8Gi
+  storageClassName: disallowed-storage-class
+
+```
+
+Usage
+
+```shell
+kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-library/master/library/general/storageclass/samples/storageclass-allowlist/example_disallowed.yaml
+```
+
+</details>
+
+
+</details>

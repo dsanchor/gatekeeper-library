@@ -3,25 +3,37 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	"k8s.io/utils/strings/slices"
 )
 
 const (
-	// raw github source URL
+	// raw github source URL.
 	sourceURL = "https://raw.githubusercontent.com/open-policy-agent/gatekeeper-library/master/"
 
-	// directory entry point for parsing
+	// directory entry point for parsing.
 	entryPoint         = "library"
 	mutationEntryPoint = "mutation"
+	sidebarPath        = "website/sidebars.js"
+
+	// regex patterns.
+	pspReadmeLinkPattern = `\[([^\[\]]+)\]\(([^(]+)\)`
+	generalPattern       = `(\s*)(type:\s+'category',\s+label:\s+'General',\s+collapsed:\s+true,\s+items:\s*\[\s)(\s*)([^\]]*,)`
+	pspPattern           = `(\s*)(type:\s+'category',\s+label:\s+'Pod Security Policy',\s+collapsed:\s+true,\s+items:\s*\[\s)(\s*)([^\]]*,)`
+	mutationPattern      = `(\s*)(type:\s+'category',\s+label:\s+'Mutation',\s+collapsed:\s+true,\s+items:\s*\[\s)(\s*)([^\]]*,)`
 )
 
+// Skip including examples for the following Kinds.
+var skipExampleKinds = []string{"AdmissionReview"}
+
 // Suite ...
-// ToDo (nilekh): Get this struct from the Gatekeeper repo
+// ToDo (nilekh): Get this struct from the Gatekeeper repo.
 type Suite struct {
 	Kind       string `yaml:"kind"`
 	APIVersion string `yaml:"apiVersion"`
@@ -59,9 +71,13 @@ func main() {
 
 	// create website validation directory if not exists
 	if _, err := os.Stat(filepath.Join(rootDir, "website/docs/validation")); os.IsNotExist(err) {
-		os.Mkdir(filepath.Join(rootDir, "website/docs/validation"), 0755)
+		if os.Mkdir(filepath.Join(rootDir, "website/docs/validation"), 0o755) != nil {
+			fmt.Println("error while creating directory")
+			panic(err)
+		}
 	}
 
+	validationSidebarItems := make(map[string][]string)
 	for _, entry := range dirEntry {
 		if entry.Type().IsDir() {
 			basePath, err := filepath.Abs(filepath.Join(libraryPath, entry.Name()))
@@ -77,6 +93,7 @@ func main() {
 
 			for _, dir := range directories {
 				if dir.Type().IsDir() {
+					validationSidebarItems[entry.Name()] = append(validationSidebarItems[entry.Name()], dir.Name())
 					fmt.Println("Generating markdown for ", filepath.Join(basePath, dir.Name()))
 
 					suiteContent, err := os.ReadFile(filepath.Join(basePath, dir.Name(), "suite.yaml"))
@@ -127,10 +144,23 @@ func main() {
 								fmt.Println("error while reading ", testCase.Object)
 								panic(err)
 							}
-							examples += fmt.Sprintf("<details>\n<summary>%s</summary>\n\n```yaml\n%s\n```\n\nUsage\n\n```shell\nkubectl apply -f %s\n```\n\n</details>\n", testCase.Name, exampleContent, exampleRawURL)
+
+							exampleResource := make(map[string]interface{})
+							err = yaml.Unmarshal(exampleContent, &exampleResource)
+							if err != nil {
+								fmt.Printf("error while unmarshaling: %v", exampleRawURL)
+								panic(err)
+							}
+
+							if exampleKind, ok := exampleResource["kind"].(string); !ok {
+								fmt.Printf("error while parsing kind: %v", exampleRawURL)
+								panic(err)
+							} else if !slices.Contains(skipExampleKinds, exampleKind) {
+								examples += fmt.Sprintf("<details>\n<summary>%s</summary>\n\n```yaml\n%s\n```\n\nUsage\n\n```shell\nkubectl apply -f %s\n```\n\n</details>\n", testCase.Name, exampleContent, exampleRawURL)
+							}
 						}
 
-						allExamples += fmt.Sprintf("<details>\n<summary>%s</summary><blockquote>\n\n%s\n%s\n\n</blockquote></details>", test.Name, constraintExample, examples)
+						allExamples += fmt.Sprintf("<details>\n<summary>%s</summary>\n\n%s\n%s\n\n</details>", test.Name, constraintExample, examples)
 					}
 
 					templateContent, err := os.ReadFile(filepath.Join(pwd, "template.md"))
@@ -143,15 +173,15 @@ func main() {
 						"%TEMPLATE%", string(constraintTemplateContent),
 						"%RAWURL%", constraintTemplateRawURL,
 						"%EXAMPLES%", allExamples,
-						"%TITLE%", fmt.Sprintf("%s", constraintTemplate["metadata"].(map[string]interface{})["annotations"].(map[string]interface{})["metadata.gatekeeper.sh/title"]),
-						"%DESCRIPTION%", fmt.Sprintf("%s", constraintTemplate["metadata"].(map[string]interface{})["annotations"].(map[string]interface{})["description"]),
+						"%TITLE%", getConstraintTemplateTitle(constraintTemplate),
+						"%DESCRIPTION%", getConstraintTemplateDescription(constraintTemplate),
 						"%FILENAME%", dir.Name(),
 					)
 
 					err = os.WriteFile(
 						filepath.Join(rootDir, "website/docs/validation", fmt.Sprintf("%s.md", dir.Name())),
 						[]byte(replacer.Replace(string(templateContent))),
-						0644,
+						0o600,
 					)
 					if err != nil {
 						fmt.Println("error while writing file")
@@ -163,6 +193,7 @@ func main() {
 	}
 
 	// mutation
+	mutationSidebarItems := make(map[string][]string)
 	mutationPath := filepath.Join(rootDir, mutationEntryPoint)
 	mutationDirEntry, err := os.ReadDir(mutationPath)
 	if err != nil {
@@ -172,7 +203,10 @@ func main() {
 
 	// create website mutation directory if not exists
 	if _, err := os.Stat(filepath.Join(rootDir, "website/docs/mutation-examples")); os.IsNotExist(err) {
-		os.Mkdir(filepath.Join(rootDir, "website/docs/mutation-examples"), 0755)
+		if os.Mkdir(filepath.Join(rootDir, "website/docs/mutation-examples"), 0o755) != nil {
+			fmt.Println("error while creating directory")
+			panic(err)
+		}
 	}
 
 	for _, entry := range mutationDirEntry {
@@ -192,6 +226,7 @@ func main() {
 				if dir.Type().IsDir() {
 					fmt.Println("Generating markdown for ", filepath.Join(basePath, dir.Name()))
 				}
+				mutationSidebarItems[entry.Name()] = append(mutationSidebarItems[entry.Name()], dir.Name())
 
 				// get all files with name starting with "mutation"
 				files, err := os.ReadDir(filepath.Join(basePath, dir.Name(), "samples"))
@@ -217,7 +252,7 @@ func main() {
 
 						replacer := strings.NewReplacer(
 							"%RAWURL%", sourceURL+filepath.Join(mutationEntryPoint, entry.Name(), dir.Name(), "samples", file.Name()),
-							"%EXAMPLES%", fmt.Sprintf("%s", fileContentBytes),
+							"%EXAMPLES%", string(fileContentBytes),
 							"%TITLE%", dir.Name(),
 							"%FILENAME%", dir.Name(),
 						)
@@ -225,7 +260,7 @@ func main() {
 						err := os.WriteFile(
 							filepath.Join(rootDir, "website/docs/mutation-examples", fmt.Sprintf("%s.md", dir.Name())),
 							[]byte(replacer.Replace(string(mutationTemplateContent))),
-							0644,
+							0o600,
 						)
 						if err != nil {
 							fmt.Println("error while writing ", file.Name())
@@ -237,7 +272,7 @@ func main() {
 		}
 	}
 
-	//update README.md
+	// update README.md
 	fmt.Println("Updating README.md")
 	readmeTemplateContent, err := os.ReadFile(filepath.Join(rootDir, "scripts/website", "readme-template.md"))
 	if err != nil {
@@ -254,14 +289,14 @@ func main() {
 	err = os.WriteFile(
 		filepath.Join(rootDir, "website/docs/intro.md"),
 		[]byte(strings.Replace(string(readmeTemplateContent), "%CONTENT%", string(readmeContent), 1)),
-		0644,
+		0o600,
 	)
 	if err != nil {
 		fmt.Println("error while updating README.md")
 		panic(err)
 	}
 
-	//update PSP README.md
+	// update PSP README.md
 	fmt.Println("Updating PSP README.md")
 	pspReadmeTemplateContent, err := os.ReadFile(filepath.Join(rootDir, "scripts/website", "pspreadme-template.md"))
 	if err != nil {
@@ -276,7 +311,7 @@ func main() {
 	}
 
 	// find all directory path correct them to point inside validation directory
-	regex := regexp.MustCompile(`\[([^\[\]]+)\]\(([^(]+)\)`)
+	regex := regexp.MustCompile(pspReadmeLinkPattern)
 	matches := regex.FindAllStringSubmatch(string(pspReadmeContent), -1)
 
 	// iterate over matches and replace content within ()
@@ -291,10 +326,129 @@ func main() {
 	err = os.WriteFile(
 		filepath.Join(rootDir, "website/docs/pspintro.md"),
 		[]byte(strings.Replace(string(pspReadmeTemplateContent), "%CONTENT%", string(pspReadmeContent), 1)),
-		0644,
+		0o600,
 	)
 	if err != nil {
 		fmt.Println("error while updating psp README.md")
 		panic(err)
 	}
+
+	// update sidebar
+	fmt.Println("Updating sidebar")
+	var generalItems []string
+	for _, item := range validationSidebarItems["general"] {
+		generalItems = append(
+			generalItems,
+			fmt.Sprintf(
+				"'validation/%s',",
+				item,
+			),
+		)
+	}
+
+	var podSecurityPolicyItems []string
+	podSecurityPolicyItems = append(podSecurityPolicyItems, "'pspintro',")
+	for _, item := range validationSidebarItems["pod-security-policy"] {
+		podSecurityPolicyItems = append(
+			podSecurityPolicyItems,
+			fmt.Sprintf(
+				"'validation/%s',",
+				item,
+			),
+		)
+	}
+
+	var mutationItems []string
+	for _, item := range mutationSidebarItems["pod-security-policy"] {
+		mutationItems = append(
+			mutationItems,
+			fmt.Sprintf(
+				"'mutation-examples/%s',",
+				item,
+			),
+		)
+	}
+
+	data, err := os.ReadFile(filepath.Join(rootDir, sidebarPath))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// find and replace the matching content
+	updatedSidebar := getRegexReplacedString(
+		getRegexReplacedString(
+			getRegexReplacedString(
+				string(data),
+				generalPattern,
+				generalItems,
+			),
+			pspPattern,
+			podSecurityPolicyItems,
+		),
+		mutationPattern,
+		mutationItems,
+	)
+
+	// write the updated content to the file
+	err = os.WriteFile(filepath.Join(rootDir, sidebarPath), []byte(updatedSidebar), 0o600)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func getRegexReplacedString(content string, pattern string, replacement []string) string {
+	re := regexp.MustCompile(pattern)
+	matches := re.FindStringSubmatch(content)
+	if len(matches) < 5 {
+		panic("Error: could not find match in file content")
+	}
+
+	// add indentation to each item
+	for i, item := range replacement {
+		replacement[i] = fmt.Sprintf(
+			"%s%s",
+			matches[3],
+			item,
+		)
+	}
+
+	updatedContent := fmt.Sprintf("%s%s%s",
+		matches[1],
+		matches[2],
+		strings.Join(replacement, "\n"),
+	)
+
+	return re.ReplaceAllString(content, updatedContent)
+}
+
+// TODO: Use shared pkg.
+func getConstraintTemplateMetadata(constraintTemplate map[string]interface{}) map[string]interface{} {
+	metadata, ok := constraintTemplate["metadata"].(map[string]interface{})
+	if !ok {
+		panic("error while retrieving constraintTemplate metadata")
+	}
+	return metadata
+}
+
+func getConstraintTemplateAnnotations(constraintTemplate map[string]interface{}) map[string]interface{} {
+	metadata := getConstraintTemplateMetadata(constraintTemplate)
+
+	annotations, ok := metadata["annotations"].(map[string]interface{})
+	if !ok {
+		panic("error while retrieving constraintTemplate annotations")
+	}
+
+	return annotations
+}
+
+func getConstraintTemplateTitle(constraintTemplate map[string]interface{}) string {
+	annotations := getConstraintTemplateAnnotations(constraintTemplate)
+
+	return fmt.Sprintf("%s", annotations["metadata.gatekeeper.sh/title"])
+}
+
+func getConstraintTemplateDescription(constraintTemplate map[string]interface{}) string {
+	annotations := getConstraintTemplateAnnotations(constraintTemplate)
+
+	return fmt.Sprintf("%s", annotations["description"])
 }

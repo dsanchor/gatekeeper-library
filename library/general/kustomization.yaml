@@ -10,9 +10,14 @@ resources:
 - containerlimits
 - containerrequests
 - containerresourceratios
+- containerresources
 - disallowanonymous
+- disallowedrepos
 - disallowedtags
+- disallowinteractive
+- ephemeralstoragelimit
 - externalip
+- horizontalpodautoscaler
 - httpsonly
 - imagedigests
 - noupdateserviceaccount
@@ -24,5 +29,4 @@ resources:
 - uniqueingresshost
 - uniqueserviceselector
 - verifydeprecatedapi
-- containerresources
 - storageclass

@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -13,18 +12,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	opa "github.com/open-policy-agent/frameworks/constraint/pkg/client"
-	"github.com/open-policy-agent/frameworks/constraint/pkg/client/drivers/local"
+	constraintclient "github.com/open-policy-agent/frameworks/constraint/pkg/client"
+	"github.com/open-policy-agent/frameworks/constraint/pkg/client/drivers/rego"
 	"github.com/open-policy-agent/frameworks/constraint/pkg/core/templates"
+	gkapis "github.com/open-policy-agent/gatekeeper/v3/apis"
+	"github.com/open-policy-agent/gatekeeper/v3/pkg/cachemanager/parser"
+	"github.com/open-policy-agent/gatekeeper/v3/pkg/gator/reader"
+	"github.com/open-policy-agent/gatekeeper/v3/pkg/target"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/strings/slices"
-
-	gkapis "github.com/open-policy-agent/gatekeeper/apis"
-	"github.com/open-policy-agent/gatekeeper/pkg/gator"
-	"github.com/open-policy-agent/gatekeeper/pkg/target"
 )
 
-const syncAnnotation string = "metadata.gatekeeper.sh/requiresSyncData"
+const syncAnnotation string = "metadata.gatekeeper.sh/requires-sync-data"
 
 var (
 	pathFlag = flag.String("path", "", "Path to verify referential templates include sync data.")
@@ -79,7 +77,7 @@ func checkTemplates(libraryPath string) error {
 		absolutePath := filepath.Join(libraryPath, path)
 
 		// read template
-		tmpl, err := gator.ReadTemplate(scheme, system, path)
+		tmpl, err := reader.ReadTemplate(scheme, system, path)
 		if err != nil {
 			return fmt.Errorf("reading template: %w", err)
 		}
@@ -97,15 +95,10 @@ func checkTemplates(libraryPath string) error {
 
 		log.Printf("Referential template: %s\n", absolutePath)
 
-		// verify our annotation is present
-		content, ok := tmpl.GetAnnotations()[syncAnnotation]
-		if !ok {
-			return fmt.Errorf("template at path '%s' is missing annotation with key '%s'", absolutePath, syncAnnotation)
-		}
-
-		// verify the annotation content
-		if ok, err := validateRequiresSyncDataContent(strings.TrimSpace(content)); !ok {
-			return fmt.Errorf("template at path '%s' annotation with key '%s': %w", absolutePath, syncAnnotation, err)
+		// verify sync annotation is present and parsable by gatekeeper
+		_, err = parser.ReadSyncRequirements(tmpl)
+		if err != nil {
+			return fmt.Errorf("template at path %q is missing valid %s annotation: %w", absolutePath, syncAnnotation, err)
 		}
 
 		// verify that the sync object is present in the same directory as the template
@@ -131,8 +124,8 @@ func checkTemplates(libraryPath string) error {
 }
 
 type referentialChecker struct {
-	refClient    *opa.Client
-	nonRefClient *opa.Client
+	refClient    *constraintclient.Client
+	nonRefClient *constraintclient.Client
 }
 
 func newRefChecker() (*referentialChecker, error) {
@@ -181,52 +174,21 @@ func errTextIsReferential(err error) bool {
 	return strings.Contains(err.Error(), "check refs failed on module")
 }
 
-func opaClient(referential bool) (*opa.Client, error) {
-	externs := local.Externs()
+func opaClient(referential bool) (*constraintclient.Client, error) {
+	externs := rego.Externs()
 	if referential {
-		externs = local.Externs("inventory")
+		externs = rego.Externs("inventory")
 	}
 
-	driver, err := local.New(local.Tracing(false), externs)
+	driver, err := rego.New(rego.Tracing(false), externs)
 	if err != nil {
 		return nil, fmt.Errorf("creating driver: %w", err)
 	}
 
-	client, err := opa.NewClient(opa.Targets(&target.K8sValidationTarget{}), opa.Driver(driver))
+	client, err := constraintclient.NewClient(constraintclient.Targets(&target.K8sValidationTarget{}), constraintclient.Driver(driver))
 	if err != nil {
 		return nil, fmt.Errorf("creating client: %w", err)
 	}
 
 	return client, nil
-}
-
-func validateRequiresSyncDataContent(annotation string) (bool, error) {
-	allowedKeys := []string{"kinds", "groups", "versions"}
-
-	// Remove outer quotes
-	annotation = annotation[1 : len(annotation)-1]
-
-	// Validate JSON
-	if ok := json.Valid([]byte(annotation)); !ok {
-		return false, fmt.Errorf("Error validating JSON format")
-	}
-
-	// Unmarshal JSON
-	var contents []interface{}
-	if err := json.Unmarshal([]byte(annotation), &contents); err != nil {
-		return false, fmt.Errorf("Error validating JSON content")
-	}
-
-	// Validate keys
-	for _, requirement := range contents {
-		for _, equivalents := range requirement.([]interface{}) {
-			for key := range equivalents.(map[string]interface{}) {
-				if !slices.Contains(allowedKeys, key) {
-					return false, fmt.Errorf("Unexpected key '%s'", key)
-				}
-			}
-		}
-	}
-
-  return true, nil
 }

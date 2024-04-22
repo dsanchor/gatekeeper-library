@@ -17,7 +17,7 @@ metadata:
   name: k8srequiredresources
   annotations:
     metadata.gatekeeper.sh/title: "Required Resources"
-    metadata.gatekeeper.sh/version: 1.0.0
+    metadata.gatekeeper.sh/version: 1.0.1
     description: >-
       Requires containers to have defined resources set.
 
@@ -44,7 +44,7 @@ spec:
                 type: string
             limits:
               type: array
-              description: "A list of limits that should be enforced (cpu, memory or both)."
+              description: "A list of limits that should be enforced (`cpu`, `memory`, or both)."
               items:
                 type: string
                 enum:
@@ -52,7 +52,7 @@ spec:
                 - memory
             requests:
               type: array
-              description: "A list of requests that should be enforced (cpu, memory or both)."
+              description: "A list of requests that should be enforced (`cpu`, `memory`, or both)."
               items:
                 type: string
                 enum:
@@ -122,7 +122,7 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 ```
 ## Examples
 <details>
-<summary>container-limits-and-requests</summary><blockquote>
+<summary>container-limits-and-requests</summary>
 
 <details>
 <summary>constraint</summary>
@@ -289,8 +289,8 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 </details>
 
 
-</blockquote></details><details>
-<summary>container-cpu-requests-memory-limits-and-requests</summary><blockquote>
+</details><details>
+<summary>container-cpu-requests-memory-limits-and-requests</summary>
 
 <details>
 <summary>constraint</summary>
@@ -486,8 +486,8 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 </details>
 
 
-</blockquote></details><details>
-<summary>no-enforcements</summary><blockquote>
+</details><details>
+<summary>no-enforcements</summary>
 
 <details>
 <summary>constraint</summary>
@@ -645,4 +645,4 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 </details>
 
 
-</blockquote></details>
+</details>

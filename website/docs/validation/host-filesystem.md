@@ -16,7 +16,7 @@ metadata:
   name: k8spsphostfilesystem
   annotations:
     metadata.gatekeeper.sh/title: "Host Filesystem"
-    metadata.gatekeeper.sh/version: 1.0.0
+    metadata.gatekeeper.sh/version: 1.0.2
     description: >-
       Controls usage of the host filesystem. Corresponds to the
       `allowedHostPaths` field in a PodSecurityPolicy. For more information,
@@ -54,14 +54,19 @@ spec:
       rego: |
         package k8spsphostfilesystem
 
+        import data.lib.exclude_update.is_update
+
         violation[{"msg": msg, "details": {}}] {
+            # spec.volumes field is immutable.
+            not is_update(input.review)
+
             volume := input_hostpath_volumes[_]
             allowedPaths := get_allowed_paths(input)
             input_hostpath_violation(allowedPaths, volume)
             msg := sprintf("HostPath volume %v is not allowed, pod: %v. Allowed path: %v", [volume, input.review.object.metadata.name, allowedPaths])
         }
 
-        input_hostpath_violation(allowedPaths, volume) {
+        input_hostpath_violation(allowedPaths, _) {
             # An empty list means all host paths are blocked
             allowedPaths == []
         }
@@ -146,6 +151,13 @@ spec:
         input_containers[c] {
             c := input.review.object.spec.ephemeralContainers[_]
         }
+      libs:
+        - |
+          package lib.exclude_update
+
+          is_update(review) {
+              review.operation == "UPDATE"
+          }
 
 ```
 
@@ -155,7 +167,7 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 ```
 ## Examples
 <details>
-<summary>host-filesystem</summary><blockquote>
+<summary>host-filesystem</summary>
 
 <details>
 <summary>constraint</summary>
@@ -283,4 +295,4 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 </details>
 
 
-</blockquote></details>
+</details>

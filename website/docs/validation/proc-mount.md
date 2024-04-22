@@ -16,7 +16,7 @@ metadata:
   name: k8spspprocmount
   annotations:
     metadata.gatekeeper.sh/title: "Proc Mount"
-    metadata.gatekeeper.sh/version: 1.0.0
+    metadata.gatekeeper.sh/version: 1.0.3
     description: >-
       Controls the allowed `procMount` types for the container. Corresponds to
       the `allowedProcMountTypes` field in a PodSecurityPolicy. For more
@@ -62,9 +62,13 @@ spec:
       rego: |
         package k8spspprocmount
 
+        import data.lib.exclude_update.is_update
         import data.lib.exempt_container.is_exempt
 
         violation[{"msg": msg, "details": {}}] {
+            # spec.containers.securityContext.procMount field is immutable.
+            not is_update(input.review)
+
             c := input_containers[_]
             not is_exempt(c)
             allowedProcMount := get_allowed_proc_mount(input)
@@ -76,7 +80,7 @@ spec:
             allowedProcMount == "default"
             lower(c.securityContext.procMount) == "default"
         }
-        input_proc_mount_type_allowed(allowedProcMount, c) {
+        input_proc_mount_type_allowed(allowedProcMount, _) {
             allowedProcMount == "unmasked"
         }
 
@@ -102,10 +106,12 @@ spec:
             out = "default"
         }
         get_allowed_proc_mount(arg) = out {
+            arg.parameters.procMount
             not valid_proc_mount(arg.parameters.procMount)
             out = "default"
         }
         get_allowed_proc_mount(arg) = out {
+            valid_proc_mount(arg.parameters.procMount)
             out = lower(arg.parameters.procMount)
         }
 
@@ -116,6 +122,12 @@ spec:
             lower(str) == "unmasked"
         }
       libs:
+        - |
+          package lib.exclude_update
+
+          is_update(review) {
+              review.operation == "UPDATE"
+          }
         - |
           package lib.exempt_container
 
@@ -145,7 +157,7 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 ```
 ## Examples
 <details>
-<summary>default-proc-mount-required</summary><blockquote>
+<summary>default-proc-mount-required</summary>
 
 <details>
 <summary>constraint</summary>
@@ -253,4 +265,4 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 </details>
 
 
-</blockquote></details>
+</details>

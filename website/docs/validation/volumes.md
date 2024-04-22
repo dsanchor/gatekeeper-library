@@ -16,7 +16,7 @@ metadata:
   name: k8spspvolumetypes
   annotations:
     metadata.gatekeeper.sh/title: "Volume Types"
-    metadata.gatekeeper.sh/version: 1.0.0
+    metadata.gatekeeper.sh/version: 1.0.2
     description: >-
       Restricts mountable volume types to those specified by the user.
       Corresponds to the `volumes` field in a PodSecurityPolicy. For more
@@ -47,7 +47,12 @@ spec:
       rego: |
         package k8spspvolumetypes
 
+        import data.lib.exclude_update.is_update
+
         violation[{"msg": msg, "details": {}}] {
+            # spec.volumes field is immutable.
+            not is_update(input.review)
+
             volume_fields := {x | input.review.object.spec.volumes[_][x]; x != "name"}
             field := volume_fields[_]
             not input_volume_type_allowed(field)
@@ -55,13 +60,20 @@ spec:
         }
 
         # * may be used to allow all volume types
-        input_volume_type_allowed(field) {
+        input_volume_type_allowed(_) {
             input.parameters.volumes[_] == "*"
         }
 
         input_volume_type_allowed(field) {
             field == input.parameters.volumes[_]
         }
+      libs:
+        - |
+          package lib.exclude_update
+
+          is_update(review) {
+              review.operation == "UPDATE"
+          }
 
 ```
 
@@ -71,7 +83,7 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 ```
 ## Examples
 <details>
-<summary>host-path-disallowed</summary><blockquote>
+<summary>host-path-disallowed</summary>
 
 <details>
 <summary>constraint</summary>
@@ -185,4 +197,4 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 </details>
 
 
-</blockquote></details>
+</details>

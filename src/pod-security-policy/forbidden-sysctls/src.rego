@@ -1,7 +1,12 @@
 package k8spspforbiddensysctls
 
+import data.lib.exclude_update.is_update
+
 # Block if forbidden
 violation[{"msg": msg, "details": {}}] {
+    # spec.securityContext.sysctls field is immutable.
+    not is_update(input.review)
+
     sysctl := input.review.object.spec.securityContext.sysctls[_].name
     forbidden_sysctl(sysctl)
     msg := sprintf("The sysctl %v is not allowed, pod: %v. Forbidden sysctls: %v", [sysctl, input.review.object.metadata.name, input.parameters.forbiddenSysctls])
@@ -9,13 +14,14 @@ violation[{"msg": msg, "details": {}}] {
 
 # Block if not explicitly allowed
 violation[{"msg": msg, "details": {}}] {
+    not is_update(input.review)
     sysctl := input.review.object.spec.securityContext.sysctls[_].name
     not allowed_sysctl(sysctl)
-    msg := sprintf("The sysctl %v is not explictly allowed, pod: %v. Allowed sysctls: %v", [sysctl, input.review.object.metadata.name, input.parameters.allowedSysctls])
+    msg := sprintf("The sysctl %v is not explicitly allowed, pod: %v. Allowed sysctls: %v", [sysctl, input.review.object.metadata.name, input.parameters.allowedSysctls])
 }
 
 # * may be used to forbid all sysctls
-forbidden_sysctl(sysctl) {
+forbidden_sysctl(_) {
     input.parameters.forbiddenSysctls[_] == "*"
 }
 
@@ -30,7 +36,7 @@ forbidden_sysctl(sysctl) {
 }
 
 # * may be used to allow all sysctls
-allowed_sysctl(sysctl) {
+allowed_sysctl(_) {
     input.parameters.allowedSysctls[_] == "*"
 }
 

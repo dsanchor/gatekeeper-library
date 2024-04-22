@@ -1,8 +1,12 @@
 package k8spspprocmount
 
+import data.lib.exclude_update.is_update
 import data.lib.exempt_container.is_exempt
 
 violation[{"msg": msg, "details": {}}] {
+    # spec.containers.securityContext.procMount field is immutable.
+    not is_update(input.review)
+
     c := input_containers[_]
     not is_exempt(c)
     allowedProcMount := get_allowed_proc_mount(input)
@@ -14,7 +18,7 @@ input_proc_mount_type_allowed(allowedProcMount, c) {
     allowedProcMount == "default"
     lower(c.securityContext.procMount) == "default"
 }
-input_proc_mount_type_allowed(allowedProcMount, c) {
+input_proc_mount_type_allowed(allowedProcMount, _) {
     allowedProcMount == "unmasked"
 }
 
@@ -40,10 +44,12 @@ get_allowed_proc_mount(arg) = out {
     out = "default"
 }
 get_allowed_proc_mount(arg) = out {
+    arg.parameters.procMount
     not valid_proc_mount(arg.parameters.procMount)
     out = "default"
 }
 get_allowed_proc_mount(arg) = out {
+    valid_proc_mount(arg.parameters.procMount)
     out = lower(arg.parameters.procMount)
 }
 

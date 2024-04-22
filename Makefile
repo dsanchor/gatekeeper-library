@@ -6,10 +6,11 @@ KUSTOMIZE_VERSION ?= 4.5.5
 GATEKEEPER_VERSION ?= release-3.11
 BATS_VERSION ?= 1.8.2
 GATOR_VERSION ?= 3.11.0
-GOMPLATE_VERSION ?= 3.10.0
+GOMPLATE_VERSION ?= 3.11.6
 
 REPO_ROOT := $(shell git rev-parse --show-toplevel)
 WEBSITE_SCRIPT_DIR := $(REPO_ROOT)/scripts/website
+VALIDATE_SCRIPT_DIR := $(REPO_ROOT)/scripts/validate
 ARTIFACTHUB_SCRIPT_DIR := $(REPO_ROOT)/scripts/artifacthub
 REQUIRE_SYNC_SCRIPT_DIR := $(REPO_ROOT)/scripts/require-sync
 
@@ -52,7 +53,10 @@ __build-gator:
 
 .PHONY: generate
 generate: __build-gomplate
-	$(docker) run -v $(shell pwd):/gatekeeper-library gomplate-container ./scripts/generate.sh
+	$(docker) run \
+		-u $(shell id -u):$(shell id -g) \
+		-v $(shell pwd):/gatekeeper-library \
+		gomplate-container ./scripts/generate.sh
 
 .PHONY: __build-gomplate
 __build-gomplate:
@@ -70,6 +74,19 @@ require-sync:
 generate-website-docs:
 	cd $(WEBSITE_SCRIPT_DIR); go run generate.go
 
+.PHONY: unit-test
+unit-test:
+	cd $(ARTIFACTHUB_SCRIPT_DIR); go test -v
+	cd $(VALIDATE_SCRIPT_DIR); go test -v
+	cd $(REQUIRE_SYNC_SCRIPT_DIR); go test -v
+
 .PHONY: generate-artifacthub-artifacts
 generate-artifacthub-artifacts:
-	cd $(ARTIFACTHUB_SCRIPT_DIR); go test -v && go run hub.go
+	cd $(ARTIFACTHUB_SCRIPT_DIR); go run hub.go
+
+.PHONY: validate
+validate:
+	cd $(VALIDATE_SCRIPT_DIR); go run validate.go
+
+.PHONY: generate-all
+generate-all: generate generate-website-docs generate-artifacthub-artifacts

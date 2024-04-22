@@ -16,7 +16,7 @@ metadata:
   name: k8spspfsgroup
   annotations:
     metadata.gatekeeper.sh/title: "FS Group"
-    metadata.gatekeeper.sh/version: 1.0.0
+    metadata.gatekeeper.sh/version: 1.0.2
     description: >-
       Controls allocating an FSGroup that owns the Pod's volumes. Corresponds
       to the `fsGroup` field in a PodSecurityPolicy. For more information, see
@@ -59,13 +59,18 @@ spec:
       rego: |
         package k8spspfsgroup
 
+        import data.lib.exclude_update.is_update
+
         violation[{"msg": msg, "details": {}}] {
+            # spec.securityContext.fsGroup field is immutable.
+            not is_update(input.review)
+
             spec := input.review.object.spec
             not input_fsGroup_allowed(spec)
             msg := sprintf("The provided pod spec fsGroup is not allowed, pod: %v. Allowed fsGroup: %v", [input.review.object.metadata.name, input.parameters])
         }
 
-        input_fsGroup_allowed(spec) {
+        input_fsGroup_allowed(_) {
             # RunAsAny - No range is required. Allows any fsGroup ID to be specified.
             input.parameters.rule == "RunAsAny"
         }
@@ -103,6 +108,13 @@ spec:
         has_field(object, field) = true {
             object[field]
         }
+      libs:
+        - |
+          package lib.exclude_update
+
+          is_update(review) {
+              review.operation == "UPDATE"
+          }
 
 ```
 
@@ -112,7 +124,7 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 ```
 ## Examples
 <details>
-<summary>fsgroup</summary><blockquote>
+<summary>fsgroup</summary>
 
 <details>
 <summary>constraint</summary>
@@ -207,4 +219,4 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 </details>
 
 
-</blockquote></details>
+</details>

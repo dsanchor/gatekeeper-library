@@ -1,9 +1,9 @@
 ---
 id: httpsonly
-title: HTTPS only
+title: HTTPS Only
 ---
 
-# HTTPS only
+# HTTPS Only
 
 ## Description
 Requires Ingress resources to be HTTPS only.  Ingress resources must include the `kubernetes.io/ingress.allow-http` annotation, set to `false`. By default a valid TLS {} configuration is required, this can be made optional by setting the `tlsOptional` parameter to `true`.
@@ -16,8 +16,8 @@ kind: ConstraintTemplate
 metadata:
   name: k8shttpsonly
   annotations:
-    metadata.gatekeeper.sh/title: "HTTPS only"
-    metadata.gatekeeper.sh/version: 1.0.0
+    metadata.gatekeeper.sh/title: "HTTPS Only"
+    metadata.gatekeeper.sh/version: 1.0.2
     description: >-
       Requires Ingress resources to be HTTPS only.  Ingress resources must
       include the `kubernetes.io/ingress.allow-http` annotation, set to `false`.
@@ -52,19 +52,19 @@ spec:
 
         violation[{"msg": msg}] {
           input.review.object.kind == "Ingress"
-          re_match("^(extensions|networking.k8s.io)/", input.review.object.apiVersion)
+          regex.match("^(extensions|networking.k8s.io)/", input.review.object.apiVersion)
           ingress := input.review.object
           not https_complete(ingress)
-          not tls_is_optional(ingress)
+          not tls_is_optional
           msg := sprintf("Ingress should be https. tls configuration and allow-http=false annotation are required for %v", [ingress.metadata.name])
         }
 
         violation[{"msg": msg}] {
           input.review.object.kind == "Ingress"
-          re_match("^(extensions|networking.k8s.io)/", input.review.object.apiVersion)
+          regex.match("^(extensions|networking.k8s.io)/", input.review.object.apiVersion)
           ingress := input.review.object
           not annotation_complete(ingress)
-          not tls_not_optional(ingress)
+          tls_is_optional
           msg := sprintf("Ingress should be https. The allow-http=false annotation is required for %v", [ingress.metadata.name])
         }
 
@@ -78,17 +78,9 @@ spec:
           ingress.metadata.annotations["kubernetes.io/ingress.allow-http"] == "false"
         }
 
-        tls_is_optional(ingress) = true {
+        tls_is_optional {
           parameters := object.get(input, "parameters", {})
-          tlsOptional := object.get(parameters, "tlsOptional", false)
-          is_boolean(tlsOptional)
-          true == tlsOptional
-        }
-
-        tls_not_optional(ingress) = true {
-          parameters := object.get(input, "parameters", {})
-          tlsOptional := object.get(parameters, "tlsOptional", false)
-          true != tlsOptional
+          object.get(parameters, "tlsOptional", false) == true
         }
 
 ```
@@ -99,7 +91,7 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 ```
 ## Examples
 <details>
-<summary>tls-required</summary><blockquote>
+<summary>tls-required</summary>
 
 <details>
 <summary>constraint</summary>
@@ -190,8 +182,8 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 </details>
 
 
-</blockquote></details><details>
-<summary>tls-optional</summary><blockquote>
+</details><details>
+<summary>tls-optional</summary>
 
 <details>
 <summary>constraint</summary>
@@ -283,4 +275,4 @@ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper-
 </details>
 
 
-</blockquote></details>
+</details>
